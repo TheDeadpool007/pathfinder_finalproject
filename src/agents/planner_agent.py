@@ -29,7 +29,7 @@ class PlannerAgent:
     def __init__(self) -> None:
         self.routing = GeoapifyRoutingClient()
 
-    def execute(self, *, pois: List[POI], num_days: int) -> List[DayItinerary]:
+    def execute(self, *, pois: List[POI], num_days: int, start_coords: Optional[Tuple[float, float]] = None, end_coords: Optional[Tuple[float, float]] = None, transport_mode: str = "auto") -> List[DayItinerary]:
         if num_days < 1:
             raise ValueError("num_days must be >= 1")
 
@@ -63,12 +63,24 @@ class PlannerAgent:
             routed_points = ordered[: self.MAX_WAYPOINTS_PER_DAY]
 
             # Auto choose walk vs drive based on approximate distance
-            approx_km = self._approx_path_km(routed_points)
-            mode = "walk" if approx_km <= 6.0 else "drive"
+            # Mode: honour user choice or auto-detect from distance
+            if transport_mode in ("walk", "drive", "transit", "bicycle"):
+                mode = transport_mode
+            else:
+                approx_items = []
+                if start_coords:
+                    approx_items.append(POI(name="_start", lat=start_coords[0], lon=start_coords[1]))
+                approx_items.extend(routed_points)
+                if end_coords:
+                    approx_items.append(POI(name="_end", lat=end_coords[0], lon=end_coords[1]))
+                approx_km = self._approx_path_km(approx_items)
+                mode = "walk" if approx_km <= 4.0 else "drive"  # ~2.5 miles threshold
 
-            route_summary = self._route_day(routed_points, mode=mode, lang="en")
+            route_summary = self._route_day(routed_points, mode=mode, lang="en", start_coords=start_coords, end_coords=end_coords)
 
             theme = self._infer_theme(ordered)
+            dist_km = round((route_summary.get("distance_m") or 0.0) / 1000.0, 3)
+            time_min = round((route_summary.get("time_s") or 0.0) / 60.0, 1)
 
             # Store all POIs (ordered), but route is built only for routed_points
             itineraries.append(
@@ -78,6 +90,8 @@ class PlannerAgent:
                     pois=ordered,
                     items=ordered,
                     route=route_summary,
+                    total_distance_km=dist_km,
+                    total_time_min=time_min,
                 )
             )
 
@@ -88,22 +102,29 @@ class PlannerAgent:
     # Routing
     # -------------------------
 
-    def _route_day(self, ordered: List[POI], *, mode: str, lang: str) -> Dict[str, Any]:
+    def _route_day(self, ordered: List[POI], *, mode: str, lang: str, start_coords: Optional[Tuple[float, float]] = None, end_coords: Optional[Tuple[float, float]] = None) -> Dict[str, Any]:
         """
         Always returns a dict (never None) for UI stability.
-        If <2 POIs, route is a valid empty summary.
+        Builds route: optional start -> POIs -> optional end.
         """
-        if len(ordered) < 2:
+        stops_meta = [{"name": p.name, "lat": p.lat, "lon": p.lon} for p in ordered]
+
+        waypoints: List[Tuple[float, float]] = []
+        if start_coords:
+            waypoints.append(start_coords)
+        waypoints.extend([(p.lat, p.lon) for p in ordered])
+        if end_coords:
+            waypoints.append(end_coords)
+
+        if len(waypoints) < 2:
             return {
                 "mode": mode,
                 "distance_m": 0.0,
                 "time_s": 0.0,
-                "stops": [{"name": p.name, "lat": p.lat, "lon": p.lon} for p in ordered],
+                "stops": stops_meta,
                 "instructions": [],
-                "note": "Not enough stops to compute a route",
+                "note": "Not enough waypoints to compute a route",
             }
-
-        waypoints: List[Tuple[float, float]] = [(p.lat, p.lon) for p in ordered]
 
         try:
             r = self.routing.route(waypoints=waypoints, mode=mode, lang=lang, include_instructions=True)
@@ -111,7 +132,7 @@ class PlannerAgent:
                 "mode": r.mode,
                 "distance_m": float(r.distance_m),
                 "time_s": float(r.time_s),
-                "stops": [{"name": p.name, "lat": p.lat, "lon": p.lon} for p in ordered],
+                "stops": stops_meta,
                 "instructions": r.instructions[:50],
             }
         except Exception as e:
@@ -120,7 +141,7 @@ class PlannerAgent:
                 "mode": mode,
                 "distance_m": 0.0,
                 "time_s": 0.0,
-                "stops": [{"name": p.name, "lat": p.lat, "lon": p.lon} for p in ordered],
+                "stops": stops_meta,
                 "instructions": [],
                 "error": str(e),
             }

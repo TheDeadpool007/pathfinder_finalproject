@@ -61,20 +61,33 @@ class OpenMeteoClient:
         lon: float,
         days: int = 7,
         timezone: str = "auto",
+        start_date: "Optional[datetime.date]" = None,
     ) -> List[DailyWeather]:
         """
         Returns up to `days` entries of daily forecast.
+        If start_date is provided and within the 16-day forecast window,
+        fetches forecasts starting from that date.
         """
+        import datetime
+
         if days < 1:
             raise ValueError("days must be >= 1")
 
+        today = datetime.date.today()
         params: Dict[str, Any] = {
             "latitude": lat,
             "longitude": lon,
             "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
-            "forecast_days": min(days, 16),
             "timezone": timezone,
         }
+
+        if start_date is not None and (start_date - today).days <= 15:
+            # Use explicit date range when trip is within the forecast window
+            end_date = start_date + datetime.timedelta(days=days - 1)
+            params["start_date"] = start_date.strftime("%Y-%m-%d")
+            params["end_date"] = end_date.strftime("%Y-%m-%d")
+        else:
+            params["forecast_days"] = min(days, 16)
 
         data = self._get_json(self.BASE_URL, params=params)
         return self._parse_daily(data)

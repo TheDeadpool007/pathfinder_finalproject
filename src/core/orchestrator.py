@@ -9,6 +9,7 @@ Orchestrator
 
 from __future__ import annotations
 
+import datetime
 import logging
 import os
 import time
@@ -20,8 +21,12 @@ from src.agents.searcher_agent import SearcherAgent
 from src.agents.planner_agent import PlannerAgent
 from src.agents.budget_agent import BudgetAgent
 from src.agents.explainer_agent import ExplainerAgent
-from src.core.models import DayItinerary, DayWeather
+from src.core.models import DayItinerary, DayWeather, POI
 from src.tools.openmeteo import OpenMeteoClient
+from src.tools.geoapify_geocoding import GeoapifyGeocoder
+from src.tools.wikimedia import fetch_photo_url
+from src.tools.geoapify_places import GeoapifyPlacesClient
+from src.tools.llm_ollama import OllamaLLM
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +41,9 @@ class Orchestrator:
         self.planner = PlannerAgent()
         self.budgeter = BudgetAgent()
         self.explainer = ExplainerAgent()
-
         self.weather = OpenMeteoClient()
-
+        self.llm = OllamaLLM()
         self._session = requests.Session()
-
         logger.info("Orchestrator initialized")
 
     def run(
@@ -50,6 +53,10 @@ class Orchestrator:
         lon: float,
         num_days: int,
         interests: List[str],
+        start_date: Optional[datetime.date] = None,
+        start_location: Optional[str] = None,
+        end_location: Optional[str] = None,
+        transport_mode: str = "auto",
     ) -> Dict[str, Any]:
         """
         Execute the full agent pipeline.
@@ -66,7 +73,13 @@ class Orchestrator:
         # 0.5) Weather (best-effort; do NOT fail whole pipeline if weather fails)
         weather_by_day: List[DayWeather] = []
         try:
-            daily = self.weather.daily_forecast(lat=lat, lon=lon, days=max(num_days, 1), timezone="auto")
+            daily = self.weather.daily_forecast(
+                lat=lat,
+                lon=lon,
+                days=max(num_days, 1),
+                timezone="auto",
+                start_date=start_date,
+            )
             weather_by_day = [
                 DayWeather(
                     date=w.date,
@@ -85,8 +98,51 @@ class Orchestrator:
         # 1) SearcherAgent (Geoapify Places)
         pois = self.searcher.execute(lat=lat, lon=lon, interests=interests)
 
+        # 1.5) Geocode start/end locations if provided
+        start_coords: Optional[Tuple[float, float]] = None
+        end_coords: Optional[Tuple[float, float]] = None
+        if start_location or end_location:
+            geocoder = GeoapifyGeocoder()
+            if start_location:
+                try:
+                    s_lat, s_lon, _ = geocoder.geocode(start_location)
+                    start_coords = (s_lat, s_lon)
+                    logger.info(f"Start location '{start_location}' -> {start_coords}")
+                except Exception as e:
+                    logger.warning(f"Could not geocode start location '{start_location}': {e}")
+            if end_location:
+                try:
+                    e_lat, e_lon, _ = geocoder.geocode(end_location)
+                    end_coords = (e_lat, e_lon)
+                    logger.info(f"End location '{end_location}' -> {end_coords}")
+                except Exception as e:
+                    logger.warning(f"Could not geocode end location '{end_location}': {e}")
+
+        # 2) Detect intercity travel: if start is >200 km from destination, fly there
+        # and don't inject cross-country coords into day routing
+        FLIGHT_THRESHOLD_KM = 200.0
+        intercity_mode = "local"
+        planner_start_coords = start_coords
+        planner_end_coords = end_coords
+        if start_coords:
+            dist_to_dest_km = self._haversine_km(start_coords[0], start_coords[1], lat, lon)
+            if dist_to_dest_km > FLIGHT_THRESHOLD_KM:
+                intercity_mode = "flight"
+                planner_start_coords = None
+                planner_end_coords = None
+                logger.info(
+                    f"Start '{start_location}' is {dist_to_dest_km:.0f} km from destination "
+                    f"-> intercity mode = flight, day routes will be within-city only"
+                )
+
         # 2) PlannerAgent (Routing per day)
-        itineraries: List[DayItinerary] = self.planner.execute(pois=pois, num_days=num_days)
+        itineraries: List[DayItinerary] = self.planner.execute(
+            pois=pois,
+            num_days=num_days,
+            start_coords=planner_start_coords,
+            end_coords=planner_end_coords,
+            transport_mode=transport_mode,
+        )
 
         # 2.5) Attach weather per day (Day 1 -> forecast[0], etc.)
         if weather_by_day:
@@ -97,6 +153,61 @@ class Orchestrator:
 
         # 3) BudgetAgent (uses day.pois + day.total_distance_km)
         itineraries = self.budgeter.execute(itineraries)
+
+        # 3.5) Enrich POIs: Wikimedia photo + Ollama description (best-effort)
+        ollama_ok = self.llm.is_available()
+        places_client = GeoapifyPlacesClient()
+        for it in itineraries:
+            # Nearby restaurants for this day (centre of day's POIs)
+            if it.pois:
+                day_lat = sum(p.lat for p in it.pois) / len(it.pois)
+                day_lon = sum(p.lon for p in it.pois) / len(it.pois)
+                try:
+                    raw_restaurants = places_client.search_by_interests(
+                        center_lat=day_lat,
+                        center_lon=day_lon,
+                        interests=["restaurants"],
+                        radius_m=1000,
+                        per_interest_limit=5,
+                    )
+                    it.restaurants = [
+                        POI(
+                            name=r.name,
+                            lat=r.lat,
+                            lon=r.lon,
+                            address=r.formatted or "",
+                            categories=r.categories or [],
+                            website=r.website or "",
+                            phone=r.phone or "",
+                            opening_hours=r.opening_hours or "",
+                            rating=r.rating,
+                            source="geoapify",
+                        )
+                        for r in raw_restaurants
+                    ]
+                except Exception as e:
+                    logger.warning(f"Restaurant fetch failed for day {it.day}: {e}")
+                    it.restaurants = []
+
+            for poi in it.pois:
+                # Photo from Wikimedia (best-effort)
+                if not poi.photo_url:
+                    try:
+                        poi.photo_url = fetch_photo_url(poi.name) or ""
+                    except Exception:
+                        pass
+                # Description from Ollama (best-effort, only if not already set)
+                if ollama_ok and not poi.description:
+                    try:
+                        prompt = (
+                            f"In 2 sentences, describe the attraction '{poi.name}' "
+                            f"located at {poi.address or destination} for a tourist."
+                        )
+                        desc = self.llm.generate(prompt, max_tokens=80)
+                        if desc:
+                            poi.description = desc.strip()
+                    except Exception:
+                        pass
 
         # 4) ExplainerAgent (text summary)
         explanation = self.explainer.execute(itineraries=itineraries, destination=destination)
@@ -109,11 +220,25 @@ class Orchestrator:
             "itineraries": itineraries,
             "explanation": explanation,
             "coords": {"lat": lat, "lon": lon},
+            "start_location": start_location or "",
+            "end_location": end_location or start_location or "",
+            "transport_mode": transport_mode,
+            "intercity_mode": intercity_mode,
         }
 
     # -------------------------
     # Helpers
     # -------------------------
+
+    def _haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Great-circle distance in km between two lat/lon points."""
+        import math
+        R = 6371.0
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
     def _coords_look_valid(self, lat: float, lon: float) -> bool:
         try:

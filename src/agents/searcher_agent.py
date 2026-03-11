@@ -64,14 +64,12 @@ class SearcherAgent:
         for p in geo_places:
             # Provide a simple, non-LLM description for UI compatibility
             # (Geoapify doesn't reliably provide a narrative description)
-            desc_parts: List[str] = []
+            # Build readable description from categories only (address stored separately)
             if p.categories:
-                # keep it short and readable
-                desc_parts.append(", ".join(p.categories[:3]))
-            if p.formatted:
-                desc_parts.append(p.formatted)
-
-            description = " • ".join([x for x in desc_parts if x]).strip()
+                nice = [c.split(".")[-1].replace("_", " ").title() for c in p.categories[:4]]
+                description = " · ".join(nice)
+            else:
+                description = ""
 
             pois.append(
                 POI(
@@ -79,9 +77,14 @@ class SearcherAgent:
                     lat=p.lat,
                     lon=p.lon,
                     address=p.formatted or "",
-                    description=description,  # ✅ stops UI crash and still shows something useful
+                    description=description,
                     categories=p.categories or [],
                     source="geoapify",
+                    website=p.website or "",
+                    phone=p.phone or "",
+                    opening_hours=p.opening_hours or "",
+                    rating=p.rating,
+                    fee=p.fee,
                 )
             )
 

@@ -27,6 +27,14 @@ class POI:
     categories: List[str] = field(default_factory=list)
     source: str = "geoapify"
 
+    # Extended fields from Geoapify / enrichment
+    website: str = ""
+    phone: str = ""
+    opening_hours: str = ""
+    rating: Optional[float] = None
+    photo_url: str = ""          # Wikimedia Commons thumbnail
+    fee: Optional[bool] = None   # True = paid entry, False = free
+
 
 # ======================================================
 # BUDGET MODEL (matches BudgetAgent exactly)
@@ -105,6 +113,9 @@ class DayItinerary:
 
     # ---- Weather ----
     weather: Optional[DayWeather] = None
+
+    # ---- Nearby restaurants (enriched by orchestrator) ----
+    restaurants: List[POI] = field(default_factory=list)
 
     # UI / future extensions
     currency: str = "USD"

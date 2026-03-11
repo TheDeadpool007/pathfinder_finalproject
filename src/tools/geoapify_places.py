@@ -25,6 +25,11 @@ class GeoapifyPlace:
     lon: float
     formatted: str = ""
     categories: List[str] = None
+    website: str = ""
+    phone: str = ""
+    opening_hours: str = ""
+    rating: Optional[float] = None
+    fee: Optional[bool] = None
 
     def __post_init__(self) -> None:
         if self.categories is None:
@@ -314,6 +319,19 @@ class GeoapifyPlacesClient:
             formatted = props.get("formatted") or props.get("address_line2") or ""
             categories = props.get("categories") or []
 
+            # Extended fields
+            website = props.get("website") or props.get("contact:website") or ""
+            phone = props.get("phone") or props.get("contact:phone") or ""
+            opening_hours = props.get("opening_hours") or ""
+            raw_rating = props.get("rating")
+            rating: Optional[float] = float(raw_rating) if raw_rating is not None else None
+            raw_fee = props.get("fee")
+            fee: Optional[bool] = None
+            if isinstance(raw_fee, bool):
+                fee = raw_fee
+            elif isinstance(raw_fee, str):
+                fee = raw_fee.lower() in ("yes", "true", "1")
+
             out.append(
                 GeoapifyPlace(
                     name=str(name),
@@ -321,6 +339,11 @@ class GeoapifyPlacesClient:
                     lon=float(lon),
                     formatted=str(formatted) if formatted else "",
                     categories=[str(c) for c in categories] if isinstance(categories, list) else [],
+                    website=str(website) if website else "",
+                    phone=str(phone) if phone else "",
+                    opening_hours=str(opening_hours) if opening_hours else "",
+                    rating=rating,
+                    fee=fee,
                 )
             )
 
