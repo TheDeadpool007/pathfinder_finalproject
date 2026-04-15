@@ -1,6 +1,5 @@
-# app.py
 from dotenv import load_dotenv
-load_dotenv()  # MUST be first so GEOAPIFY_API_KEY is available to imported modules
+load_dotenv()  # MUST be first
 
 import datetime
 import os
@@ -9,15 +8,48 @@ from typing import List
 
 import streamlit as st
 import pandas as pd
-
 from src.core.orchestrator import Orchestrator
 from src.core.models import POI, DayItinerary
 from src.tools.currency import get_local_currency, convert
 from src.tools.pdf_export import generate_pdf
+from src.agents.nl_requirements_agent import NLRequirementsAgent  # ← NEW
 
-st.set_page_config(page_title="Agentic AI Travel Planner", layout="wide", page_icon="✈️")
+st.set_page_config(
+    page_title="Agentic AI Travel Planner", layout="wide", page_icon="✈️"
+)
 
-# ------ Helpers ------
+
+@st.cache_resource
+def get_orchestrator() -> Orchestrator:
+    return Orchestrator()
+
+
+def run_planning_pipeline(
+    destination: str,
+    num_days: int,
+    interests: List[str],
+    daily_budget: float,
+    constraints: List[str],
+    start_date: datetime.date,
+    start_location: str,
+    end_location: str,
+):
+    orch = get_orchestrator()
+    return orch.run(
+        destination=destination,
+        lat=0.0,
+        lon=0.0,
+        num_days=num_days,
+        interests=interests,
+        budget_per_day=float(daily_budget),
+        constraints=constraints,
+        start_date=start_date,
+        start_location=start_location or None,
+        end_location=end_location or None,
+        transport_mode="auto",
+    )
+
+# ------ Helpers (unchanged) ------
 
 def safe_getattr(obj, attr, default=None):
     return getattr(obj, attr, default)
@@ -63,9 +95,9 @@ def display_poi_card(poi: POI, local_currency: str):
     with col_info:
         header = f"**{name}**"
         if rating is not None:
-            header += f"  {star_rating(rating)} `{rating:.1f}`"
+            header += f" {star_rating(rating)} `{rating:.1f}`"
         if fee is not None:
-            header += "  🎟️ Paid" if fee else "  ✅ Free entry"
+            header += " 🎟️ Paid" if fee else " ✅ Free entry"
         st.markdown(header)
         if address:
             st.caption(f"📍 {address}")
@@ -79,9 +111,8 @@ def display_poi_card(poi: POI, local_currency: str):
         if phone:
             links.append(f"📞 {phone}")
         if links:
-            st.markdown("  |  ".join(links))
+            st.markdown(" | ".join(links))
     st.markdown("<hr style='margin:6px 0; border-color:#eee'>", unsafe_allow_html=True)
-
 
 def km_to_miles(km):
     return float(km) * 0.621371
@@ -93,7 +124,6 @@ def mm_to_inches(mm):
     return float(mm) * 0.0393701
 
 def format_dist(x):
-    """km value → display in miles."""
     try:
         return f"{km_to_miles(x):.2f} mi"
     except Exception:
@@ -109,14 +139,12 @@ def format_min(x):
         return "N/A"
 
 def format_temp(x):
-    """°C value → display in °F."""
     try:
         return f"{c_to_f(x):.1f}°F"
     except Exception:
         return "N/A"
 
 def format_precip(x):
-    """mm value → display in inches."""
     try:
         return f"{mm_to_inches(x):.2f} in"
     except Exception:
@@ -125,108 +153,243 @@ def format_precip(x):
 # ------ App UI ------
 
 st.title("✈️ Agentic AI Travel Planner")
-st.caption("Multi-Agent System for Intelligent Travel Itinerary Generation")
+st.caption("Multi-Agent System · Powered by Groq LLM + Free APIs")
 
-# Sidebar inputs
+DESTINATIONS = [
+    "Paris, France", "London, UK", "New York, USA", "Tokyo, Japan",
+    "Rome, Italy", "Barcelona, Spain", "Amsterdam, Netherlands",
+    "Berlin, Germany", "Dubai, UAE", "Singapore", "Sydney, Australia",
+    "Los Angeles, USA", "Chicago, USA", "Toronto, Canada", "Mumbai, India",
+    "Bangkok, Thailand", "Istanbul, Turkey", "Prague, Czech Republic",
+    "Vienna, Austria", "Lisbon, Portugal", "Athens, Greece",
+    "Budapest, Hungary", "Cairo, Egypt", "Cape Town, South Africa",
+    "Mexico City, Mexico", "Buenos Aires, Argentina", "Seoul, South Korea",
+    "Kyoto, Japan", "Bali, Indonesia", "Marrakech, Morocco",
+]
+
+# ================================================================
+# SIDEBAR
+# ================================================================
 with st.sidebar:
     st.header("🎯 Trip Preferences")
 
-    DESTINATIONS = [
-        "Paris, France",
-        "London, UK",
-        "New York, USA",
-        "Tokyo, Japan",
-        "Rome, Italy",
-        "Barcelona, Spain",
-        "Amsterdam, Netherlands",
-        "Berlin, Germany",
-        "Dubai, UAE",
-        "Singapore",
-        "Sydney, Australia",
-        "Los Angeles, USA",
-        "Chicago, USA",
-        "Toronto, Canada",
-        "Mumbai, India",
-        "Bangkok, Thailand",
-        "Istanbul, Turkey",
-        "Prague, Czech Republic",
-        "Vienna, Austria",
-        "Lisbon, Portugal",
-        "Athens, Greece",
-        "Budapest, Hungary",
-        "Cairo, Egypt",
-        "Cape Town, South Africa",
-        "Mexico City, Mexico",
-        "Buenos Aires, Argentina",
-        "Seoul, South Korea",
-        "Kyoto, Japan",
-        "Bali, Indonesia",
-        "Marrakech, Morocco",
-    ]
-    destination = st.selectbox("Destination", DESTINATIONS, index=0)
-
-    today = datetime.date.today()
-    default_start = today + datetime.timedelta(days=7)
-    default_end = default_start + datetime.timedelta(days=2)
-
-    date_range = st.date_input(
-        "Trip Dates",
-        value=(default_start, default_end),
-        min_value=today,
-        format="DD/MM/YYYY",
+    # ---- INPUT MODE TOGGLE ---- NEW
+    input_mode = st.radio(
+        "Input mode",
+        ["💬 Describe your trip (AI)", "📋 Fill in the form"],
+        index=0,
+        help="AI mode: type naturally. Form mode: use dropdowns.",
     )
 
-    if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-        start_date, end_date = date_range[0], date_range[1]
-        num_days = (end_date - start_date).days + 1
-        st.caption(f"{start_date.strftime('%b %d')} → {end_date.strftime('%b %d, %Y')} · {num_days} day{'s' if num_days != 1 else ''}")
-    else:
-        # User is mid-selection (only picked start so far)
-        start_date = date_range[0] if isinstance(date_range, (list, tuple)) else date_range
-        end_date = start_date
-        num_days = 1
-        st.caption("Select an end date to complete the range.")
-
-    daily_budget = st.number_input("Daily Budget (USD)", min_value=10, value=150, step=10)
-
-    # Provide the same normalized options the SearcherAgent understands
-    interest_options = [
-        "Museums", "History", "Culture", "Art", "Attractions",
-        "Food", "Restaurants", "Cafe", "Nightlife",
-        "Parks", "Nature", "Shopping", "Transport", "Essentials"
-    ]
-    interests = st.multiselect("Interests", interest_options, default=["Museums", "History"])
-
     st.markdown("---")
-    st.markdown("**📍 Route**")
-    start_location = st.text_input("Starting from", value="", placeholder="e.g. Eiffel Tower, Paris")
-    end_location = st.text_input("Ending at (blank = same as start)", value="", placeholder="e.g. CDG Airport, Paris")
 
-    if "GEOAPIFY_API_KEY" not in os.environ or not os.environ.get("GEOAPIFY_API_KEY"):
-        st.error(
-            "GEOAPIFY_API_KEY not loaded. Make sure you have a .env with GEOAPIFY_API_KEY and "
-            "`from dotenv import load_dotenv; load_dotenv()` at top of app.py."
+    # ================================================================
+    # MODE 1 — Natural Language (NEW)
+    # ================================================================
+    if input_mode == "💬 Describe your trip (AI)":
+        st.markdown("**Tell the AI what you want:**")
+        nl_prompt = st.text_area(
+            label="Your trip idea",
+            placeholder=(
+                "e.g. Plan me 4 days in Tokyo under $120/day, "
+                "I love street food and temples. Starting from Shinjuku station."
+            ),
+            height=120,
+            label_visibility="collapsed",
         )
 
-    st.markdown("---")
-    generate = st.button("🚀 Generate Itinerary", use_container_width=True)
+        # Show example prompts
+        with st.expander("💡 Example prompts"):
+            st.markdown("""
+- *3 days in Paris, interested in art and history, budget $150/day*
+- *Week in Bali focused on nature and beaches, mid-range budget*
+- *5-day Tokyo trip, love food and nightlife, $100/day, starting from Narita airport*
+- *Quick 2-day Rome trip for history lovers on a tight $60/day budget*
+""")
 
-orch = Orchestrator()
+        # Parse button
+        parsed_nl = None
+        if st.button("🤖 Parse with AI", use_container_width=True):
+            if nl_prompt.strip():
+                with st.spinner("Parsing your request..."):
+                    agent = NLRequirementsAgent()
+                    parsed_nl = agent.parse(nl_prompt)
+                    st.session_state["nl_parsed"] = parsed_nl
+                    st.session_state["nl_parsed_prompt"] = nl_prompt.strip()
+            else:
+                st.warning("Please type your trip idea first.")
 
-# Only run pipeline on button click
+        # Show what the AI extracted
+        if "nl_parsed" in st.session_state and st.session_state["nl_parsed"]:
+            p = st.session_state["nl_parsed"]
+            llm_label = {"groq": "🟢 Groq LLM", "ollama": "🟡 Ollama", "keyword_fallback": "🔵 Keyword match", "none": "⚪ Default"}.get(p.get("llm_used", "none"), "")
+            conf = p.get("confidence", 0)
+            st.success(f"Parsed! {llm_label} · confidence {conf:.0%}")
+            st.markdown(f"""
+**Destination:** {p.get('destination')}  
+**Days:** {p.get('num_days')}  
+**Budget:** ${p.get('budget_per_day')}/day  
+**Interests:** {', '.join(p.get('interests', []))}  
+**Constraints:** {', '.join(p.get('constraints', [])) or 'None'}  
+**Starting from:** {p.get('start_location') or 'Not specified'}
+""")
+            if conf < 0.6:
+                st.warning("Low confidence — double check the values above.")
+
+        # Dates still needed even in NL mode
+        st.markdown("---")
+        st.markdown("**Trip dates:**")
+        today = datetime.date.today()
+        default_start = today + datetime.timedelta(days=7)
+        default_end = default_start + datetime.timedelta(days=2)
+        date_range = st.date_input(
+            "Trip Dates",
+            value=(default_start, default_end),
+            min_value=today,
+            format="DD/MM/YYYY",
+        )
+
+        st.markdown("---")
+        st.markdown("**Route (optional):**")
+        nl_start = st.text_input("Starting from", value="", placeholder="e.g. Narita Airport")
+        nl_end = st.text_input("Ending at", value="", placeholder="e.g. Shinjuku Station")
+
+        generate = st.button("🚀 Generate Itinerary", use_container_width=True, type="primary")
+
+        # Auto-parse on generate so we don't use stale/default values.
+        if generate and nl_prompt.strip():
+            current_prompt = nl_prompt.strip()
+            parsed_prompt = st.session_state.get("nl_parsed_prompt", "")
+            has_parsed = bool(st.session_state.get("nl_parsed"))
+            if (not has_parsed) or (parsed_prompt != current_prompt):
+                with st.spinner("Parsing your request..."):
+                    agent = NLRequirementsAgent()
+                    st.session_state["nl_parsed"] = agent.parse(current_prompt)
+                    st.session_state["nl_parsed_prompt"] = current_prompt
+
+        # Resolve final params from NL parse
+        if "nl_parsed" in st.session_state and st.session_state["nl_parsed"]:
+            p = st.session_state["nl_parsed"]
+            destination = p.get("destination", DESTINATIONS[0])
+            num_days = p.get("num_days", 3)
+            daily_budget = p.get("budget_per_day", 100.0)
+            interests = p.get("interests", ["Attractions", "Culture"])
+            constraints = p.get("constraints", [])
+            # start_location: prefer sidebar field, then NL-parsed
+            start_location = nl_start or p.get("start_location", "")
+            end_location = nl_end or ""
+        else:
+            destination = DESTINATIONS[0]
+            num_days = 3
+            daily_budget = 100.0
+            interests = ["Attractions", "Culture"]
+            constraints = []
+            start_location = nl_start
+            end_location = nl_end
+
+        # Resolve dates
+        if isinstance(date_range, (list, tuple)):
+            if len(date_range) >= 2:
+                start_date, end_date = date_range[0], date_range[1]
+                num_days = (end_date - start_date).days + 1
+                st.caption(f"{start_date.strftime('%b %d')} → {end_date.strftime('%b %d, %Y')} · {num_days} day{'s' if num_days != 1 else ''}")
+            elif len(date_range) == 1:
+                start_date = date_range[0]
+                end_date = start_date
+                num_days = 1
+                st.caption("Select an end date to complete the range.")
+            else:
+                start_date = today
+                end_date = today
+                num_days = 1
+                st.caption("Select trip dates to continue.")
+        else:
+            start_date = date_range
+            end_date = start_date
+            num_days = 1
+            st.caption("Select an end date to complete the range.")
+
+    # ================================================================
+    # MODE 2 — Original Form (unchanged)
+    # ================================================================
+    else:
+        destination = st.selectbox("Destination", DESTINATIONS, index=0)
+
+        today = datetime.date.today()
+        default_start = today + datetime.timedelta(days=7)
+        default_end = default_start + datetime.timedelta(days=2)
+        date_range = st.date_input(
+            "Trip Dates",
+            value=(default_start, default_end),
+            min_value=today,
+            format="DD/MM/YYYY",
+        )
+
+        if isinstance(date_range, (list, tuple)):
+            if len(date_range) >= 2:
+                start_date, end_date = date_range[0], date_range[1]
+                num_days = (end_date - start_date).days + 1
+                st.caption(f"{start_date.strftime('%b %d')} → {end_date.strftime('%b %d, %Y')} · {num_days} day{'s' if num_days != 1 else ''}")
+            elif len(date_range) == 1:
+                start_date = date_range[0]
+                end_date = start_date
+                num_days = 1
+                st.caption("Select an end date to complete the range.")
+            else:
+                start_date = today
+                end_date = today
+                num_days = 1
+                st.caption("Select trip dates to continue.")
+        else:
+            start_date = date_range
+            end_date = start_date
+            num_days = 1
+            st.caption("Select an end date to complete the range.")
+
+        daily_budget = st.number_input("Daily Budget (USD)", min_value=10, value=150, step=10)
+
+        interest_options = [
+            "Museums", "History", "Culture", "Art", "Attractions",
+            "Food", "Restaurants", "Cafe", "Nightlife",
+            "Parks", "Nature", "Shopping", "Transport", "Essentials",
+        ]
+        interests = st.multiselect("Interests", interest_options, default=["Museums", "History"])
+
+        constraints_text = st.text_input(
+            "Constraints (comma-separated)",
+            value="",
+            placeholder="e.g. wheelchair accessible, vegetarian, budget-friendly",
+            help="Optional notes that should influence ranking and explanation.",
+        )
+        constraints = [c.strip() for c in constraints_text.split(",") if c.strip()]
+
+        st.markdown("---")
+        st.markdown("**📍 Route**")
+        start_location = st.text_input("Starting from", value="", placeholder="e.g. Eiffel Tower, Paris")
+        end_location = st.text_input("Ending at (blank = same as start)", value="", placeholder="e.g. CDG Airport, Paris")
+
+        if "GEOAPIFY_API_KEY" not in os.environ or not os.environ.get("GEOAPIFY_API_KEY"):
+            st.error("GEOAPIFY_API_KEY not loaded. Check your .env file.")
+
+        st.markdown("---")
+        generate = st.button("🚀 Generate Itinerary", use_container_width=True, type="primary")
+
+# ================================================================
+# PIPELINE — runs on button click (same for both modes)
+# ================================================================
+
 if generate:
     with st.spinner("Planning your trip — fetching places, routes and weather…"):
         try:
-            result = orch.run(
+            result = run_planning_pipeline(
                 destination=destination,
-                lat=0.0,
-                lon=0.0,
                 num_days=num_days,
                 interests=interests,
+                daily_budget=float(daily_budget),
+                constraints=constraints,
                 start_date=start_date,
-                start_location=start_location or None,
-                end_location=end_location or None,
-                transport_mode="auto",
+                start_location=start_location,
+                end_location=end_location,
             )
         except Exception as e:
             st.error("Planner failed — see traceback below.")
@@ -235,24 +398,30 @@ if generate:
 
     st.success("✅ Itinerary ready!")
 
-    # ---- Currency setup ----
+    # ---- Currency ----
     local_currency = get_local_currency(destination)
     itineraries = result.get("itineraries", [])
     total_budget_usd = sum(
         (safe_getattr(d, "estimate", None) and safe_getattr(d.estimate, "total", 0) or 0)
-        if hasattr(d, "estimate")
-        else 0
+        if hasattr(d, "estimate") else 0
         for d in itineraries
     )
     total_local = convert(total_budget_usd, local_currency)
 
-    # ---- Flight / intercity travel banner ----
+    budget_warning = result.get("budget_warning", "")
+    if budget_warning:
+        st.warning(budget_warning)
+
+    if result.get("search_retried"):
+        st.info("Searcher retried automatically with broader radius/interests to improve POI coverage.")
+
+    # ---- Flight banner ----
     intercity_mode = result.get("intercity_mode", "local")
     start_loc = result.get("start_location", "")
     if intercity_mode == "flight" and start_loc:
         st.info(
-            f"✈️ **Getting there:** Fly from **{start_loc}** to **{destination}**  "
-            f"— day routes below are within {destination.split(',')[0]}."
+            f"✈️ **Getting there:** Fly from **{start_loc}** to **{destination}** "
+            f"— day routes are within-city."
         )
 
     # ---- Summary banner ----
@@ -302,16 +471,17 @@ if generate:
     st.markdown("---")
     st.subheader("🗓 Day-wise Itinerary")
 
+    display_start_date = start_date if isinstance(start_date, datetime.date) else datetime.date.today()
+
     for day in itineraries:
         day_num = safe_getattr(day, "day", 1) if hasattr(day, "day") else day.get("day", 1)
-        day_date = start_date + datetime.timedelta(days=day_num - 1)
+        day_index = int(day_num or 1)
+        day_date = display_start_date + datetime.timedelta(days=day_index - 1)
         date_str = day_date.strftime("%a, %b %d")
         theme = safe_getattr(day, "theme", "") if hasattr(day, "theme") else day.get("theme", "")
-        title = f"Day {day_num} — {date_str}: {theme}"
+        title = f"Day {day_index} — {date_str}: {theme}"
 
         with st.expander(title, expanded=False):
-
-            # Weather
             weather = safe_getattr(day, "weather", None)
             if weather:
                 wc1, wc2, wc3, wc4 = st.columns([2, 1, 1, 1])
@@ -321,7 +491,6 @@ if generate:
                 wc4.metric("Precipitation", format_precip(safe_getattr(weather, "precip_mm")))
                 st.markdown("---")
 
-            # Day mini-map
             places = safe_getattr(day, "pois", []) or []
             if places:
                 day_coords = [{"lat": p.lat, "lon": p.lon, "name": p.name} for p in places]
@@ -329,7 +498,6 @@ if generate:
                 st.map(pd.DataFrame(day_coords), latitude="lat", longitude="lon", size=120)
                 st.markdown("---")
 
-            # POI cards
             if not places:
                 st.write("_No places for this day._")
             else:
@@ -337,14 +505,12 @@ if generate:
                 for poi in places:
                     display_poi_card(poi, local_currency)
 
-            # Route summary
             route = safe_getattr(day, "route", None) or {}
             if route:
                 dist_km = safe_getattr(day, "total_distance_km", 0.0) or 0.0
                 time_min = safe_getattr(day, "total_time_min", 0.0) or 0.0
                 mode = route.get("mode", "")
                 mode_icon = {"walk": "🚶", "drive": "🚗", "bicycle": "🚲", "transit": "🚇"}.get(mode, "🗺️")
-
                 rc1, rc2, rc3 = st.columns(3)
                 rc1.metric("Distance", format_dist(dist_km))
                 rc2.metric("Est. Travel Time", format_min(time_min))
@@ -352,7 +518,6 @@ if generate:
 
                 r_start = result.get("start_location", "")
                 r_end = result.get("end_location", "") or r_start
-                # Only show start→end caption when it's a local (same-city) trip
                 if r_start and intercity_mode != "flight":
                     st.caption(f"From **{r_start}** → **{r_end or destination}**")
 
@@ -364,7 +529,6 @@ if generate:
                         st.link_button("🗺️ Open in Google Maps", url)
                 st.markdown("---")
 
-            # Restaurants
             restaurants = safe_getattr(day, "restaurants", []) or []
             if restaurants:
                 with st.expander("🍽️ Nearby Restaurants", expanded=False):
@@ -376,7 +540,7 @@ if generate:
                         r_web = safe_getattr(r, "website", "")
                         label = f"🍴 **{r_name}**"
                         if r_rating is not None:
-                            label += f"  {star_rating(r_rating)} `{r_rating:.1f}`"
+                            label += f" {star_rating(r_rating)} `{r_rating:.1f}`"
                         st.markdown(label)
                         if r_addr:
                             st.caption(f"📍 {r_addr}")
@@ -384,9 +548,8 @@ if generate:
                             st.caption(f"🕐 {r_hours}")
                         if r_web:
                             st.markdown(f"[🌐 Website]({r_web})")
-                st.markdown("---")
+                        st.markdown("---")
 
-            # Budget breakdown
             estimate = safe_getattr(day, "estimate", None) or safe_getattr(day, "budget", None)
             if estimate:
                 st.markdown("**💰 Daily Budget**")
@@ -405,10 +568,6 @@ if generate:
                     day_local = convert(total, local_currency)
                     if day_local:
                         st.caption(f"≈ {day_local:,.0f} {local_currency}")
-            else:
-                est_cost = safe_getattr(day, "estimated_cost", None)
-                if est_cost:
-                    st.markdown(f"**Estimated daily cost:** ${est_cost}")
 
     # ---- PDF Download ----
     st.markdown("---")

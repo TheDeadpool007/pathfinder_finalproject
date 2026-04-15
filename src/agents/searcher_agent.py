@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Optional
 
 from src.core.models import POI
 from src.tools.geoapify_places import GeoapifyPlacesClient
@@ -45,7 +45,17 @@ class SearcherAgent:
     def __init__(self) -> None:
         self.places = GeoapifyPlacesClient()
 
-    def execute(self, *, lat: float, lon: float, interests: List[str]) -> List[POI]:
+    def execute(
+        self,
+        *,
+        lat: float,
+        lon: float,
+        interests: List[str],
+        budget_per_day: Optional[float] = None,
+        constraints: Optional[List[str]] = None,
+        radius_m: int = 6000,
+        per_interest_limit: int = 12,
+    ) -> List[POI]:
         logger.info("SearcherAgent: fetching POIs from Geoapify Places")
 
         normalized = self._normalize_interests(interests)
@@ -55,8 +65,8 @@ class SearcherAgent:
             center_lat=lat,
             center_lon=lon,
             interests=normalized,
-            radius_m=6000,
-            per_interest_limit=12,
+            radius_m=radius_m,
+            per_interest_limit=per_interest_limit,
             lang="en",
         )
 
@@ -87,6 +97,8 @@ class SearcherAgent:
                     fee=p.fee,
                 )
             )
+
+        pois = self._rank_pois(pois, budget_per_day=budget_per_day, constraints=constraints)
 
         logger.info(f"SearcherAgent: fetched {len(pois)} POIs")
         return pois
@@ -119,3 +131,52 @@ class SearcherAgent:
             out = ["attractions", "food", "parks"]
 
         return out
+
+    def _rank_pois(
+        self,
+        pois: List[POI],
+        *,
+        budget_per_day: Optional[float] = None,
+        constraints: Optional[List[str]] = None,
+    ) -> List[POI]:
+        """
+        Rank POIs by practical travel fit.
+
+        The goal is not strict optimization, but a visible quality gain:
+        cheaper / more accessible options are promoted when the user asks for them.
+        """
+        normalized_constraints = {
+            (c or "").strip().lower() for c in (constraints or []) if (c or "").strip()
+        }
+        low_budget = budget_per_day is not None and float(budget_per_day) <= 80.0
+
+        def score(poi: POI) -> float:
+            text = " ".join([poi.name, poi.description, " ".join(poi.categories or [])]).lower()
+            value = float(poi.rating or 0.0)
+
+            if poi.fee is False:
+                value += 1.5
+            elif poi.fee is True:
+                value -= 1.0
+
+            if low_budget:
+                value += 1.5 if poi.fee is False else -1.5
+
+            if any(k in normalized_constraints for k in {"cheap", "budget", "low budget", "tight budget"}):
+                value += 1.25 if poi.fee is False else -1.25
+
+            if any(k in normalized_constraints for k in {"accessibility", "accessible", "wheelchair", "mobility"}):
+                if any(word in text for word in ["museum", "gallery", "park", "garden", "square", "promenade"]):
+                    value += 1.0
+                if any(word in text for word in ["stairs", "cliff", "mountain", "club", "bar", "nightlife"]):
+                    value -= 1.0
+
+            if any(k in normalized_constraints for k in {"family", "kids", "children"}):
+                if any(word in text for word in ["park", "museum", "garden", "zoo", "aquarium"]):
+                    value += 1.0
+                if any(word in text for word in ["bar", "club", "nightlife"]):
+                    value -= 1.0
+
+            return value
+
+        return sorted(pois, key=score, reverse=True)

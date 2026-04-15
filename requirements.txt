@@ -11,3 +11,20 @@ requests>=2.31.0
 
 # Environment Variables
 python-dotenv>=1.0.0
+
+# PDF Export
+reportlab>=4.0.0
+
+# Groq LLM (free cloud inference — replaces paid APIs)
+groq>=0.9.0
+
+# Agentic orchestration
+langgraph>=0.2.30
+langchain-core>=0.3.0
+langchain-groq>=0.2.0
+
+# Geographic clustering
+scikit-learn>=1.4.0
+
+# Testing
+pytest>=8.0.0

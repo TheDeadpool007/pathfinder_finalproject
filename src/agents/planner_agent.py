@@ -4,8 +4,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.core.models import DayItinerary, POI
+from src.core.models import DayItinerary, DayWeather, POI
 from src.tools.geoapify_routing import GeoapifyRoutingClient
+
+try:
+    from sklearn.cluster import KMeans
+except Exception:  # pragma: no cover - handled via runtime fallback
+    KMeans = None
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +34,18 @@ class PlannerAgent:
     def __init__(self) -> None:
         self.routing = GeoapifyRoutingClient()
 
-    def execute(self, *, pois: List[POI], num_days: int, start_coords: Optional[Tuple[float, float]] = None, end_coords: Optional[Tuple[float, float]] = None, transport_mode: str = "auto") -> List[DayItinerary]:
+    def execute(
+        self,
+        *,
+        pois: List[POI],
+        num_days: int,
+        start_coords: Optional[Tuple[float, float]] = None,
+        end_coords: Optional[Tuple[float, float]] = None,
+        transport_mode: str = "auto",
+        budget_per_day: Optional[float] = None,
+        constraints: Optional[List[str]] = None,
+        weather_by_day: Optional[List[DayWeather]] = None,
+    ) -> List[DayItinerary]:
         if num_days < 1:
             raise ValueError("num_days must be >= 1")
 
@@ -41,17 +57,20 @@ class PlannerAgent:
 
         pois_clean = self._dedupe_pois(pois)
 
-        # Round-robin split across days
-        buckets: List[List[POI]] = [[] for _ in range(num_days)]
-        for idx, poi in enumerate(pois_clean):
-            buckets[idx % num_days].append(poi)
+        # Geographic split by day (k-means), with deterministic fallback.
+        buckets = self._split_into_day_buckets(pois_clean, num_days)
 
         itineraries: List[DayItinerary] = []
         for d in range(num_days):
             day_num = d + 1
 
-            # Cap POIs for UI sanity (you can tune this)
-            day_items = buckets[d][:10]
+            # Cap POIs for UI sanity, but tune the cap to the travel budget.
+            day_items = self._select_day_items(
+                buckets[d],
+                budget_per_day=budget_per_day,
+                constraints=constraints,
+                day_weather=(weather_by_day[d] if weather_by_day and d < len(weather_by_day) else None),
+            )
             if not day_items:
                 itineraries.append(DayItinerary(day=day_num, theme="Free Day", pois=[], items=[], route=None))
                 continue
@@ -164,6 +183,108 @@ class PlannerAgent:
             if not duplicate:
                 out.append(p)
         return out
+
+    def _select_day_items(
+        self,
+        pois: List[POI],
+        *,
+        budget_per_day: Optional[float] = None,
+        constraints: Optional[List[str]] = None,
+        day_weather: Optional[DayWeather] = None,
+    ) -> List[POI]:
+        """
+        Reduce and rank day POIs using a lightweight budget-aware heuristic.
+
+        The aim is to visibly make the itinerary feel more intentional without
+        needing a heavy optimization solver.
+        """
+        normalized_constraints = {
+            (c or "").strip().lower() for c in (constraints or []) if (c or "").strip()
+        }
+
+        if budget_per_day is None:
+            limit = 10
+        elif budget_per_day <= 60:
+            limit = 5
+        elif budget_per_day <= 90:
+            limit = 6
+        elif budget_per_day <= 140:
+            limit = 8
+        else:
+            limit = 10
+
+        def score(poi: POI) -> float:
+            text = " ".join([poi.name, poi.description, " ".join(poi.categories or [])]).lower()
+            value = float(poi.rating or 0.0)
+            cats = " ".join(poi.categories or []).lower()
+            indoor = any(k in cats for k in ["entertainment", "museum", "gallery", "catering", "commercial"])
+            outdoor = any(k in cats for k in ["leisure", "natural", "beach", "park", "tourism"])
+
+            if budget_per_day is not None and budget_per_day <= 90:
+                value += 1.5 if poi.fee is False else -1.0
+
+            if any(k in normalized_constraints for k in {"cheap", "budget", "low budget", "tight budget"}):
+                value += 1.5 if poi.fee is False else -1.5
+
+            if any(k in normalized_constraints for k in {"accessibility", "accessible", "wheelchair", "mobility"}):
+                if any(word in text for word in ["museum", "gallery", "park", "garden", "square", "promenade"]):
+                    value += 1.0
+                if any(word in text for word in ["stairs", "cliff", "mountain", "nightlife", "bar", "club"]):
+                    value -= 1.0
+
+            if self._is_rain_heavy(day_weather):
+                if indoor:
+                    value += 1.5
+                if outdoor:
+                    value -= 1.5
+
+            value += self._opening_hours_adjustment(poi.opening_hours)
+
+            return value
+
+        ranked = sorted(pois, key=score, reverse=True)
+        return ranked[:limit]
+
+    def _split_into_day_buckets(self, pois: List[POI], num_days: int) -> List[List[POI]]:
+        buckets: List[List[POI]] = [[] for _ in range(num_days)]
+
+        if not pois:
+            return buckets
+
+        # Use k-means when available and there are enough points.
+        if KMeans is not None and len(pois) >= num_days and num_days > 1:
+            try:
+                coords = [[p.lat, p.lon] for p in pois]
+                model = KMeans(n_clusters=num_days, random_state=42, n_init=10)
+                labels = model.fit_predict(coords)
+                for poi, label in zip(pois, labels):
+                    buckets[int(label)].append(poi)
+
+                # Rare guard: empty cluster fallback to round-robin.
+                if all(buckets):
+                    return buckets
+            except Exception as e:
+                logger.warning(f"PlannerAgent: k-means clustering failed, fallback to round-robin: {e}")
+
+        for idx, poi in enumerate(pois):
+            buckets[idx % num_days].append(poi)
+        return buckets
+
+    def _is_rain_heavy(self, weather: Optional[DayWeather]) -> bool:
+        if weather is None:
+            return False
+        heavy_codes = {63, 65, 67, 81, 82, 95, 96, 99}
+        return float(weather.precip_mm or 0.0) > 5.0 or int(weather.weather_code or -1) in heavy_codes
+
+    def _opening_hours_adjustment(self, opening_hours: str) -> float:
+        text = (opening_hours or "").strip().lower()
+        if not text:
+            return 0.0
+        if any(k in text for k in ["closed", "appointment", "off", "temporarily"]):
+            return -1.25
+        if any(k in text for k in ["24/7", "24 hours", "always open"]):
+            return 0.5
+        return 0.0
 
     def _nearest_neighbor_order(self, pois: List[POI]) -> List[POI]:
         remaining = pois[:]

@@ -11,17 +11,20 @@ This project demonstrates a **multi-agent architecture** where specialized AI ag
 
 ### Key Features
 - 🤖 **5 Specialized Agents** working in sequential pipeline
-- 🗺️ **Smart POI Selection** using OpenTripMap API
-- 📊 **Route Optimization** with OpenRouteService
+- 🧠 **LangGraph StateGraph Orchestration** with conditional retry on sparse POI search
+- 🗺️ **Smart POI Selection** using Geoapify Places API
+- 📊 **Route Optimization** with Geoapify Routing
+- 🌧️ **Weather-Aware Planning** to prefer indoor POIs on heavy-rain days
+- 📍 **Geographic Day Clustering** via k-means for tighter daily itineraries
 - 💰 **Budget Estimation** with automatic warnings
 - 🌤️ **Weather Integration** via Open-Meteo API
-- 🧠 **Optional LLM Enhancement** with Ollama (local inference)
+- 🧠 **Optional LLM Enhancement** with Groq + Ollama fallback
 
 ---
 
 ## 🏗️ Multi-Agent Architecture
 
-The system uses a **sequential agent pipeline** coordinated by the `TravelOrchestrator`:
+The system uses a **LangGraph-coordinated multi-agent pipeline** with conditional edges and retry logic:
 
 ```
 User Input
@@ -44,7 +47,7 @@ Travel Plan Output
 | Agent | Input | Output | Purpose |
 |-------|-------|--------|---------|
 | **RequirementsAgent** | Raw user input | `TripRequirements` | Parse and validate preferences |
-| **SearcherAgent** | `TripRequirements` | `List[POI]` | Query OpenTripMap for attractions |
+| **SearcherAgent** | destination coords + interests | `List[POI]` | Query Geoapify Places for attractions |
 | **PlannerAgent** | Requirements + POIs | `List[DayItinerary]` | Group POIs, calculate routes |
 | **BudgetAgent** | Itinerary | `List[BudgetEstimate]` | Estimate daily costs |
 | **ExplainerAgent** | Complete plan | Natural language text | Generate human-readable summary |
@@ -55,11 +58,11 @@ Travel Plan Output
 
 - **Python 3.10+** - Core language
 - **Streamlit** - Web UI framework
-- **Pydantic** - Data validation
+- **Dataclasses** - Typed data contracts between agents
 - **Ollama** - Local LLM inference (optional)
+- **Groq** - Free cloud LLM inference (optional)
 - **REST APIs:**
-  - OpenTripMap - Points of interest
-  - OpenRouteService - Routing & distances
+    - Geoapify - Geocoding, points of interest, routing
   - Open-Meteo - Weather forecasts
 
 ---
@@ -95,8 +98,8 @@ cp .env.example .env
 ```
 
 Get free API keys:
-- **OpenTripMap**: https://opentripmap.io/product
-- **OpenRouteService**: https://openrouteservice.org/dev/#/signup
+- **Geoapify**: https://www.geoapify.com/get-started-with-maps-api
+- **Groq** (optional for cloud LLM): https://console.groq.com
 
 ### Step 5 (Optional): Install Ollama
 For enhanced LLM explanations:
@@ -149,7 +152,7 @@ agentic_travel_planner/
 │   │
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── models.py               # Pydantic data models
+│   │   ├── models.py               # Shared dataclass models
 │   │   └── orchestrator.py        # Agent coordinator
 │   │
 │   ├── agents/
@@ -162,9 +165,11 @@ agentic_travel_planner/
 │   │
 │   └── tools/
 │       ├── __init__.py
+│       ├── llm_groq.py             # Groq LLM wrapper
 │       ├── llm_ollama.py           # Ollama LLM wrapper
-│       ├── opentripmap.py          # OpenTripMap API
-│       ├── openrouteservice.py     # Routing API
+│       ├── geoapify_geocoding.py   # Geocoding API
+│       ├── geoapify_places.py      # Places API
+│       ├── geoapify_routing.py     # Routing API
 │       └── openmeteo.py            # Weather API
 │
 └── .github/
@@ -176,7 +181,7 @@ agentic_travel_planner/
 ## 🔬 How It Works (Technical Details)
 
 ### 1. Agent Communication
-Agents communicate through **typed Pydantic models**:
+Agents communicate through **typed dataclass models**:
 - Each agent has a clearly defined input/output contract
 - Data flows sequentially through the pipeline
 - No shared state between agents (functional approach)
@@ -243,11 +248,14 @@ This project satisfies "agentic AI" criteria through:
 
 ### Environment Variables (.env)
 ```bash
-# OpenTripMap API Key (required for POI search)
-OPENTRIPMAP_API_KEY=your_key_here
+# Geoapify API Key (required for geocoding, places, routing)
+GEOAPIFY_API_KEY=your_key_here
 
-# OpenRouteService API Key (required for routing)
-OPENROUTESERVICE_API_KEY=your_key_here
+# Groq API key (optional, for cloud LLM enhancement)
+GROQ_API_KEY=your_key_here
+
+# Groq model (optional)
+GROQ_MODEL=llama-3.1-8b-instant
 
 # Ollama Model (optional, defaults to qwen2.5:0.5b)
 OLLAMA_MODEL=qwen2.5:0.5b
@@ -265,7 +273,7 @@ For 8GB RAM systems:
 
 ### "API key not found"
 - Copy `.env.example` to `.env`
-- Add your API keys
+- Add at least `GEOAPIFY_API_KEY`
 - Restart the application
 
 ### "Ollama not available"
@@ -275,7 +283,7 @@ For 8GB RAM systems:
 ### "No POIs found"
 - Check API keys are valid
 - Verify destination spelling
-- System will use fallback data if APIs fail
+- Check Geoapify account quota and key restrictions
 
 ### "Budget exceeded"
 - Adjust budget_per_day or num_days

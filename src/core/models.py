@@ -6,6 +6,27 @@ from typing import Any, Dict, List, Optional
 
 
 # ======================================================
+# TRIP REQUIREMENTS MODEL
+# ======================================================
+
+@dataclass
+class TripRequirements:
+    """
+    Structured travel request used by the legacy requirements agent.
+
+    Keeps the current project compatible with both form input and
+    natural-language parsing workflows.
+    """
+
+    destination: str
+    num_days: int = 3
+    budget_per_day: float = 100.0
+    interests: List[str] = field(default_factory=list)
+    constraints: List[str] = field(default_factory=list)
+    start_location: str = ""
+
+
+# ======================================================
 # POI MODEL
 # ======================================================
 
