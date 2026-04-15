@@ -1,3 +1,13 @@
+---
+title: Pathfinder
+emoji: ✈️
+colorFrom: blue
+colorTo: indigo
+sdk: streamlit
+app_file: streamlit_app.py
+pinned: false
+---
+
 # Agentic AI Travel Planner
 
 **Final Year Engineering Project**  
