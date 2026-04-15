@@ -546,24 +546,24 @@ if generate:
 
                 restaurants = safe_getattr(day, "restaurants", []) or []
                 if restaurants:
-                    with st.expander("🍽️ Nearby Restaurants", expanded=False):
-                        for r in restaurants[:5]:
-                            r_name = safe_getattr(r, "name", "")
-                            r_addr = safe_getattr(r, "address", "")
-                            r_hours = safe_getattr(r, "opening_hours", "")
-                            r_rating = safe_getattr(r, "rating", None)
-                            r_web = safe_getattr(r, "website", "")
-                            label = f"🍴 **{r_name}**"
-                            if r_rating is not None:
-                                label += f" {star_rating(r_rating)} `{r_rating:.1f}`"
-                            st.markdown(label)
-                            if r_addr:
-                                st.caption(f"📍 {r_addr}")
-                            if r_hours:
-                                st.caption(f"🕐 {r_hours}")
-                            if r_web:
-                                st.markdown(f"[🌐 Website]({r_web})")
-                            st.markdown("---")
+                    st.markdown("**🍽️ Nearby Restaurants**")
+                    for r in restaurants[:5]:
+                        r_name = safe_getattr(r, "name", "")
+                        r_addr = safe_getattr(r, "address", "")
+                        r_hours = safe_getattr(r, "opening_hours", "")
+                        r_rating = safe_getattr(r, "rating", None)
+                        r_web = safe_getattr(r, "website", "")
+                        label = f"🍴 **{r_name}**"
+                        if r_rating is not None:
+                            label += f" {star_rating(r_rating)} `{r_rating:.1f}`"
+                        st.markdown(label)
+                        if r_addr:
+                            st.caption(f"📍 {r_addr}")
+                        if r_hours:
+                            st.caption(f"🕐 {r_hours}")
+                        if r_web:
+                            st.markdown(f"[🌐 Website]({r_web})")
+                        st.markdown("---")
 
                 estimate = safe_getattr(day, "estimate", None) or safe_getattr(day, "budget", None)
                 if estimate:
