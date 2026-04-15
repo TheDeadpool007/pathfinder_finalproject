@@ -250,19 +250,25 @@ class Orchestrator:
         end_location = state.get("end_location", "")
 
         if start_location or end_location:
-            geocoder = GeoapifyGeocoder()
-            if start_location:
-                try:
-                    s_lat, s_lon, _ = geocoder.geocode(start_location)
-                    start_coords = (s_lat, s_lon)
-                except Exception as e:
-                    logger.warning(f"Could not geocode start '{start_location}': {e}")
-            if end_location:
-                try:
-                    e_lat, e_lon, _ = geocoder.geocode(end_location)
-                    end_coords = (e_lat, e_lon)
-                except Exception as e:
-                    logger.warning(f"Could not geocode end '{end_location}': {e}")
+            try:
+                geocoder = GeoapifyGeocoder()
+            except Exception as e:
+                logger.warning(f"Could not initialize geocoder; skipping start/end lookup: {e}")
+                geocoder = None
+
+            if geocoder is not None:
+                if start_location:
+                    try:
+                        s_lat, s_lon, _ = geocoder.geocode(start_location)
+                        start_coords = (s_lat, s_lon)
+                    except Exception as e:
+                        logger.warning(f"Could not geocode start '{start_location}': {e}")
+                if end_location:
+                    try:
+                        e_lat, e_lon, _ = geocoder.geocode(end_location)
+                        end_coords = (e_lat, e_lon)
+                    except Exception as e:
+                        logger.warning(f"Could not geocode end '{end_location}': {e}")
 
         planner_start_coords = start_coords
         planner_end_coords = end_coords

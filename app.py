@@ -396,191 +396,209 @@ if generate:
             st.code(traceback.format_exc())
             st.stop()
 
-    st.success("✅ Itinerary ready!")
+    try:
+        st.success("✅ Itinerary ready!")
 
-    # ---- Currency ----
-    local_currency = get_local_currency(destination)
-    itineraries = result.get("itineraries", [])
-    total_budget_usd = sum(
-        (safe_getattr(d, "estimate", None) and safe_getattr(d.estimate, "total", 0) or 0)
-        if hasattr(d, "estimate") else 0
-        for d in itineraries
-    )
-    total_local = convert(total_budget_usd, local_currency)
+        # ---- Currency ----
+        local_currency = get_local_currency(destination)
+        itineraries = result.get("itineraries", [])
+        total_budget_usd = sum(
+            (safe_getattr(d, "estimate", None) and safe_getattr(d.estimate, "total", 0) or 0)
+            if hasattr(d, "estimate") else 0
+            for d in itineraries
+        )
+        total_local = convert(total_budget_usd, local_currency)
 
-    budget_warning = result.get("budget_warning", "")
-    if budget_warning:
-        st.warning(budget_warning)
+        budget_warning = result.get("budget_warning", "")
+        if budget_warning:
+            st.warning(budget_warning)
 
-    if result.get("search_retried"):
-        st.info("Searcher retried automatically with broader radius/interests to improve POI coverage.")
+        if result.get("search_retried"):
+            st.info("Searcher retried automatically with broader radius/interests to improve POI coverage.")
 
-    # ---- Flight banner ----
-    intercity_mode = result.get("intercity_mode", "local")
-    start_loc = result.get("start_location", "")
-    if intercity_mode == "flight" and start_loc:
-        st.info(
-            f"✈️ **Getting there:** Fly from **{start_loc}** to **{destination}** "
-            f"— day routes are within-city."
+        # ---- Flight banner ----
+        intercity_mode = result.get("intercity_mode", "local")
+        start_loc = result.get("start_location", "")
+        if intercity_mode == "flight" and start_loc:
+            st.info(
+                f"✈️ **Getting there:** Fly from **{start_loc}** to **{destination}** "
+                f"— day routes are within-city."
+            )
+
+        # ---- Summary banner ----
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+        col1.markdown(
+            f"<div style='font-size:0.75rem;color:gray;margin-bottom:4px'>Destination</div>"
+            f"<div style='font-size:1rem;font-weight:600'>{destination.split(',')[0]}</div>",
+            unsafe_allow_html=True,
+        )
+        col2.markdown(
+            f"<div style='font-size:0.75rem;color:gray;margin-bottom:4px'>Dates</div>"
+            f"<div style='font-size:1rem;font-weight:600'>{start_date.strftime('%b %d, %Y')} → {end_date.strftime('%b %d, %Y')}</div>",
+            unsafe_allow_html=True,
+        )
+        if total_local and local_currency != "USD":
+            cost_str = f"${total_budget_usd:.0f} USD (~{total_local:,.0f} {local_currency})"
+        else:
+            cost_str = f"${total_budget_usd:.0f} USD"
+        col3.markdown(
+            f"<div style='font-size:0.75rem;color:gray;margin-bottom:4px'>Est. Total Cost</div>"
+            f"<div style='font-size:1rem;font-weight:600'>{cost_str}</div>",
+            unsafe_allow_html=True,
+        )
+        col4.markdown(
+            f"<div style='font-size:0.75rem;color:gray;margin-bottom:4px'>Days</div>"
+            f"<div style='font-size:1rem;font-weight:600'>{num_days}</div>",
+            unsafe_allow_html=True,
         )
 
-    # ---- Summary banner ----
-    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
-    col1.markdown(
-        f"<div style='font-size:0.75rem;color:gray;margin-bottom:4px'>Destination</div>"
-        f"<div style='font-size:1rem;font-weight:600'>{destination.split(',')[0]}</div>",
-        unsafe_allow_html=True,
-    )
-    col2.markdown(
-        f"<div style='font-size:0.75rem;color:gray;margin-bottom:4px'>Dates</div>"
-        f"<div style='font-size:1rem;font-weight:600'>{start_date.strftime('%b %d, %Y')} → {end_date.strftime('%b %d, %Y')}</div>",
-        unsafe_allow_html=True,
-    )
-    if total_local and local_currency != "USD":
-        cost_str = f"${total_budget_usd:.0f} USD (~{total_local:,.0f} {local_currency})"
-    else:
-        cost_str = f"${total_budget_usd:.0f} USD"
-    col3.markdown(
-        f"<div style='font-size:0.75rem;color:gray;margin-bottom:4px'>Est. Total Cost</div>"
-        f"<div style='font-size:1rem;font-weight:600'>{cost_str}</div>",
-        unsafe_allow_html=True,
-    )
-    col4.markdown(
-        f"<div style='font-size:0.75rem;color:gray;margin-bottom:4px'>Days</div>"
-        f"<div style='font-size:1rem;font-weight:600'>{num_days}</div>",
-        unsafe_allow_html=True,
-    )
+        # ---- Explanation ----
+        explanation = result.get("explanation") or ""
+        if explanation:
+            with st.expander("📋 Trip Summary", expanded=True):
+                for line in explanation.split("\n"):
+                    if line.strip():
+                        st.write(line)
 
-    # ---- Explanation ----
-    explanation = result.get("explanation") or ""
-    if explanation:
-        with st.expander("📋 Trip Summary", expanded=True):
-            for line in explanation.split("\n"):
-                if line.strip():
-                    st.write(line)
+        def _finite_coords(rows):
+            cleaned = []
+            for row in rows:
+                try:
+                    lat = float(row.get("lat"))
+                    lon = float(row.get("lon"))
+                except Exception:
+                    continue
+                if pd.notna(lat) and pd.notna(lon):
+                    cleaned.append({"lat": lat, "lon": lon, **{k: v for k, v in row.items() if k not in {"lat", "lon"}}})
+            return cleaned
 
-    # ---- Full-trip map ----
-    all_coords = []
-    for day in itineraries:
-        for poi in (safe_getattr(day, "pois", []) or []):
-            all_coords.append({"lat": poi.lat, "lon": poi.lon, "name": poi.name})
-    if all_coords:
-        st.markdown("### 🗺️ Full Trip Map")
-        st.map(pd.DataFrame(all_coords), latitude="lat", longitude="lon", size=80)
+        # ---- Full-trip map ----
+        all_coords = []
+        for day in itineraries:
+            for poi in (safe_getattr(day, "pois", []) or []):
+                all_coords.append({"lat": getattr(poi, "lat", None), "lon": getattr(poi, "lon", None), "name": getattr(poi, "name", "")})
+        all_coords = _finite_coords(all_coords)
+        if all_coords:
+            st.markdown("### 🗺️ Full Trip Map")
+            st.map(pd.DataFrame(all_coords), latitude="lat", longitude="lon", size=80)
 
-    st.markdown("---")
-    st.subheader("🗓 Day-wise Itinerary")
+        st.markdown("---")
+        st.subheader("🗓 Day-wise Itinerary")
 
-    display_start_date = start_date if isinstance(start_date, datetime.date) else datetime.date.today()
+        display_start_date = start_date if isinstance(start_date, datetime.date) else datetime.date.today()
 
-    for day in itineraries:
-        day_num = safe_getattr(day, "day", 1) if hasattr(day, "day") else day.get("day", 1)
-        day_index = int(day_num or 1)
-        day_date = display_start_date + datetime.timedelta(days=day_index - 1)
-        date_str = day_date.strftime("%a, %b %d")
-        theme = safe_getattr(day, "theme", "") if hasattr(day, "theme") else day.get("theme", "")
-        title = f"Day {day_index} — {date_str}: {theme}"
+        for day in itineraries:
+            day_num = safe_getattr(day, "day", 1) if hasattr(day, "day") else day.get("day", 1)
+            day_index = int(day_num or 1)
+            day_date = display_start_date + datetime.timedelta(days=day_index - 1)
+            date_str = day_date.strftime("%a, %b %d")
+            theme = safe_getattr(day, "theme", "") if hasattr(day, "theme") else day.get("theme", "")
+            title = f"Day {day_index} — {date_str}: {theme}"
 
-        with st.expander(title, expanded=False):
-            weather = safe_getattr(day, "weather", None)
-            if weather:
-                wc1, wc2, wc3, wc4 = st.columns([2, 1, 1, 1])
-                wc1.metric("Condition", safe_getattr(weather, "weather_text", "N/A"))
-                wc2.metric("Min Temp", format_temp(safe_getattr(weather, "temp_min_c")))
-                wc3.metric("Max Temp", format_temp(safe_getattr(weather, "temp_max_c")))
-                wc4.metric("Precipitation", format_precip(safe_getattr(weather, "precip_mm")))
-                st.markdown("---")
+            with st.expander(title, expanded=False):
+                weather = safe_getattr(day, "weather", None)
+                if weather:
+                    wc1, wc2, wc3, wc4 = st.columns([2, 1, 1, 1])
+                    wc1.metric("Condition", safe_getattr(weather, "weather_text", "N/A"))
+                    wc2.metric("Min Temp", format_temp(safe_getattr(weather, "temp_min_c")))
+                    wc3.metric("Max Temp", format_temp(safe_getattr(weather, "temp_max_c")))
+                    wc4.metric("Precipitation", format_precip(safe_getattr(weather, "precip_mm")))
+                    st.markdown("---")
 
-            places = safe_getattr(day, "pois", []) or []
-            if places:
-                day_coords = [{"lat": p.lat, "lon": p.lon, "name": p.name} for p in places]
-                st.markdown("**📍 Day Map**")
-                st.map(pd.DataFrame(day_coords), latitude="lat", longitude="lon", size=120)
-                st.markdown("---")
-
-            if not places:
-                st.write("_No places for this day._")
-            else:
-                st.markdown("**🏛️ Places to Visit**")
-                for poi in places:
-                    display_poi_card(poi, local_currency)
-
-            route = safe_getattr(day, "route", None) or {}
-            if route:
-                dist_km = safe_getattr(day, "total_distance_km", 0.0) or 0.0
-                time_min = safe_getattr(day, "total_time_min", 0.0) or 0.0
-                mode = route.get("mode", "")
-                mode_icon = {"walk": "🚶", "drive": "🚗", "bicycle": "🚲", "transit": "🚇"}.get(mode, "🗺️")
-                rc1, rc2, rc3 = st.columns(3)
-                rc1.metric("Distance", format_dist(dist_km))
-                rc2.metric("Est. Travel Time", format_min(time_min))
-                rc3.metric("Mode", f"{mode_icon} {mode.capitalize()}")
-
-                r_start = result.get("start_location", "")
-                r_end = result.get("end_location", "") or r_start
-                if r_start and intercity_mode != "flight":
-                    st.caption(f"From **{r_start}** → **{r_end or destination}**")
-
-                stops = route.get("stops") or []
-                if stops:
-                    travelmode = {"walk": "walking", "bicycle": "bicycling", "transit": "transit"}.get(mode, "driving")
-                    url = google_maps_url(stops, travelmode)
-                    if url:
-                        st.link_button("🗺️ Open in Google Maps", url)
-                st.markdown("---")
-
-            restaurants = safe_getattr(day, "restaurants", []) or []
-            if restaurants:
-                with st.expander("🍽️ Nearby Restaurants", expanded=False):
-                    for r in restaurants[:5]:
-                        r_name = safe_getattr(r, "name", "")
-                        r_addr = safe_getattr(r, "address", "")
-                        r_hours = safe_getattr(r, "opening_hours", "")
-                        r_rating = safe_getattr(r, "rating", None)
-                        r_web = safe_getattr(r, "website", "")
-                        label = f"🍴 **{r_name}**"
-                        if r_rating is not None:
-                            label += f" {star_rating(r_rating)} `{r_rating:.1f}`"
-                        st.markdown(label)
-                        if r_addr:
-                            st.caption(f"📍 {r_addr}")
-                        if r_hours:
-                            st.caption(f"🕐 {r_hours}")
-                        if r_web:
-                            st.markdown(f"[🌐 Website]({r_web})")
+                places = safe_getattr(day, "pois", []) or []
+                if places:
+                    day_coords = _finite_coords([{ "lat": getattr(p, "lat", None), "lon": getattr(p, "lon", None), "name": getattr(p, "name", "") } for p in places])
+                    if day_coords:
+                        st.markdown("**📍 Day Map**")
+                        st.map(pd.DataFrame(day_coords), latitude="lat", longitude="lon", size=120)
                         st.markdown("---")
 
-            estimate = safe_getattr(day, "estimate", None) or safe_getattr(day, "budget", None)
-            if estimate:
-                st.markdown("**💰 Daily Budget**")
-                acc = safe_getattr(estimate, "accommodation", 0.0) or 0.0
-                food = safe_getattr(estimate, "food", 0.0) or 0.0
-                act = safe_getattr(estimate, "activities", 0.0) or 0.0
-                trans = safe_getattr(estimate, "transport", 0.0) or 0.0
-                total = safe_getattr(estimate, "total", 0.0) or 0.0
-                bc1, bc2, bc3, bc4, bc5 = st.columns(5)
-                bc1.metric("🏨 Stay", f"${acc:.0f}")
-                bc2.metric("🍽️ Food", f"${food:.0f}")
-                bc3.metric("🎡 Activities", f"${act:.0f}")
-                bc4.metric("🚗 Transport", f"${trans:.0f}")
-                bc5.metric("Total", f"${total:.0f}")
-                if total_local is not None and local_currency != "USD":
-                    day_local = convert(total, local_currency)
-                    if day_local:
-                        st.caption(f"≈ {day_local:,.0f} {local_currency}")
+                if not places:
+                    st.write("_No places for this day._")
+                else:
+                    st.markdown("**🏛️ Places to Visit**")
+                    for poi in places:
+                        display_poi_card(poi, local_currency)
 
-    # ---- PDF Download ----
-    st.markdown("---")
-    st.markdown("### 📄 Export")
-    try:
-        pdf_bytes = generate_pdf(result, start_date, end_date)
-        dest_slug = destination.split(",")[0].replace(" ", "_").lower()
-        st.download_button(
-            label="⬇️ Download Itinerary as PDF",
-            data=pdf_bytes,
-            file_name=f"itinerary_{dest_slug}_{start_date}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
-    except Exception as e:
-        st.warning(f"PDF generation failed: {e}")
+                route = safe_getattr(day, "route", None) or {}
+                if route:
+                    dist_km = safe_getattr(day, "total_distance_km", 0.0) or 0.0
+                    time_min = safe_getattr(day, "total_time_min", 0.0) or 0.0
+                    mode = route.get("mode", "")
+                    mode_icon = {"walk": "🚶", "drive": "🚗", "bicycle": "🚲", "transit": "🚇"}.get(mode, "🗺️")
+                    rc1, rc2, rc3 = st.columns(3)
+                    rc1.metric("Distance", format_dist(dist_km))
+                    rc2.metric("Est. Travel Time", format_min(time_min))
+                    rc3.metric("Mode", f"{mode_icon} {mode.capitalize()}")
+
+                    r_start = result.get("start_location", "")
+                    r_end = result.get("end_location", "") or r_start
+                    if r_start and intercity_mode != "flight":
+                        st.caption(f"From **{r_start}** → **{r_end or destination}**")
+
+                    stops = route.get("stops") or []
+                    if stops:
+                        travelmode = {"walk": "walking", "bicycle": "bicycling", "transit": "transit"}.get(mode, "driving")
+                        url = google_maps_url(stops, travelmode)
+                        if url:
+                            st.link_button("🗺️ Open in Google Maps", url)
+                    st.markdown("---")
+
+                restaurants = safe_getattr(day, "restaurants", []) or []
+                if restaurants:
+                    with st.expander("🍽️ Nearby Restaurants", expanded=False):
+                        for r in restaurants[:5]:
+                            r_name = safe_getattr(r, "name", "")
+                            r_addr = safe_getattr(r, "address", "")
+                            r_hours = safe_getattr(r, "opening_hours", "")
+                            r_rating = safe_getattr(r, "rating", None)
+                            r_web = safe_getattr(r, "website", "")
+                            label = f"🍴 **{r_name}**"
+                            if r_rating is not None:
+                                label += f" {star_rating(r_rating)} `{r_rating:.1f}`"
+                            st.markdown(label)
+                            if r_addr:
+                                st.caption(f"📍 {r_addr}")
+                            if r_hours:
+                                st.caption(f"🕐 {r_hours}")
+                            if r_web:
+                                st.markdown(f"[🌐 Website]({r_web})")
+                            st.markdown("---")
+
+                estimate = safe_getattr(day, "estimate", None) or safe_getattr(day, "budget", None)
+                if estimate:
+                    st.markdown("**💰 Daily Budget**")
+                    acc = safe_getattr(estimate, "accommodation", 0.0) or 0.0
+                    food = safe_getattr(estimate, "food", 0.0) or 0.0
+                    act = safe_getattr(estimate, "activities", 0.0) or 0.0
+                    trans = safe_getattr(estimate, "transport", 0.0) or 0.0
+                    total = safe_getattr(estimate, "total", 0.0) or 0.0
+                    bc1, bc2, bc3, bc4, bc5 = st.columns(5)
+                    bc1.metric("🏨 Stay", f"${acc:.0f}")
+                    bc2.metric("🍽️ Food", f"${food:.0f}")
+                    bc3.metric("🎡 Activities", f"${act:.0f}")
+                    bc4.metric("🚗 Transport", f"${trans:.0f}")
+                    bc5.metric("Total", f"${total:.0f}")
+                    if total_local is not None and local_currency != "USD":
+                        day_local = convert(total, local_currency)
+                        if day_local:
+                            st.caption(f"≈ {day_local:,.0f} {local_currency}")
+
+        # ---- PDF Download ----
+        st.markdown("---")
+        st.markdown("### 📄 Export")
+        try:
+            pdf_bytes = generate_pdf(result, start_date, end_date)
+            dest_slug = destination.split(",")[0].replace(" ", "_").lower()
+            st.download_button(
+                label="⬇️ Download Itinerary as PDF",
+                data=pdf_bytes,
+                file_name=f"itinerary_{dest_slug}_{start_date}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.warning(f"PDF generation failed: {e}")
+    except Exception:
+        st.error("The itinerary rendered, but one display section failed. The trip data is still available above.")
+        st.code(traceback.format_exc())
