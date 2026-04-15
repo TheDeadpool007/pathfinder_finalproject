@@ -89,7 +89,7 @@ def display_poi_card(poi: POI, local_currency: str):
     col_img, col_info = st.columns([1, 3])
     with col_img:
         if photo_url:
-            st.image(photo_url, use_container_width=True)
+            st.image(photo_url, use_column_width=True)
         else:
             st.markdown("🏛️")
     with col_info:
