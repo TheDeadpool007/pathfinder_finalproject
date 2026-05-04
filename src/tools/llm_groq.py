@@ -1,24 +1,3 @@
-# src/tools/llm_groq.py
-"""
-Groq LLM wrapper — completely free tier, no credit card required.
-
-HOW TO GET YOUR FREE KEY:
-  1. Go to https://console.groq.com
-  2. Sign up (free, no card)
-  3. Click "API Keys" → "Create API Key"
-  4. Copy the key into your .env as: GROQ_API_KEY=your_key_here
-
-Free tier limits (more than enough for a grad project):
-  - 30 requests / minute
-  - 6,000 requests / day
-  - Model: llama3-8b-8192 (fast, smart, always free)
-
-This file is used by:
-  - NLRequirementsAgent  → parse natural language prompts
-  - ExplainerAgent       → generate rich trip summaries
-  - Orchestrator         → generate per-POI descriptions
-"""
-
 from __future__ import annotations
 
 import logging

@@ -8,6 +8,7 @@ import traceback
 from typing import List
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from src.core.orchestrator import Orchestrator
 from src.core.models import POI, DayItinerary
@@ -90,7 +91,7 @@ def display_poi_card(poi: POI, local_currency: str):
     col_img, col_info = st.columns([1, 3])
     with col_img:
         if photo_url:
-            st.image(photo_url, use_column_width=True)
+            st.image(photo_url, width="stretch")
         else:
             st.markdown("🏛️")
     with col_info:
@@ -201,17 +202,33 @@ def render_coordinate_map(points, title: str):
     def sy(lat):
         return height - pad - ((lat - lat_min) / lat_span) * (height - 2 * pad)
 
+    def _shorten_label(text: str, max_chars: int) -> str:
+        clean = " ".join(text.split())
+        if len(clean) <= max_chars:
+            return clean
+        if max_chars <= 1:
+            return clean[:max_chars]
+        return clean[: max_chars - 1].rstrip() + "…"
+
+    def _label_anchor_and_position(x: float, y: float):
+        if x > width - 190:
+            return "end", x - 10, y + 4, 22
+        if x < 190:
+            return "start", x + 12, y + 4, 24
+        return "start", x + 12, y + 4, 26
+
     circles = []
     path_points = []
     for idx, point in enumerate(valid, start=1):
         x = sx(point["lon"])
         y = sy(point["lat"])
         path_points.append(f"{x:.1f},{y:.1f}")
-        label = html.escape(point["name"][:34])
+        anchor, label_x, label_y, max_chars = _label_anchor_and_position(x, y)
+        label = html.escape(_shorten_label(point["name"], max_chars))
         circles.append(f"""
             <g>
                 <circle cx="{x:.1f}" cy="{y:.1f}" r="7" fill="#ff4d4d" stroke="white" stroke-width="2" />
-                <text x="{x + 10:.1f}" y="{y - 10:.1f}" fill="#f4f4f5" font-size="12" font-family="Arial">{idx}. {label}</text>
+                <text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="{anchor}" fill="#f4f4f5" font-size="11" font-family="Arial" paint-order="stroke" stroke="#0b1220" stroke-width="2" stroke-linejoin="round">{idx}. {label}</text>
             </g>
         """)
 
@@ -251,7 +268,6 @@ def render_coordinate_map(points, title: str):
 # ------ App UI ------
 
 st.title("✈️ Agentic AI Travel Planner")
-st.caption("Multi-Agent System · Powered by Groq LLM + Free APIs")
 
 DESTINATIONS = [
     "Paris, France", "London, UK", "New York, USA", "Tokyo, Japan",
@@ -565,7 +581,7 @@ if generate:
                 all_coords.append({"lat": getattr(poi, "lat", None), "lon": getattr(poi, "lon", None), "name": getattr(poi, "name", "")})
         full_map = render_coordinate_map(all_coords, "🗺️ Full Trip Map")
         if full_map:
-            st.markdown(full_map, unsafe_allow_html=True)
+            components.html(full_map, height=500, scrolling=False)
 
         st.markdown("---")
         st.subheader("🗓 Day-wise Itinerary")
@@ -595,7 +611,7 @@ if generate:
                     day_coords = [{"lat": getattr(p, "lat", None), "lon": getattr(p, "lon", None), "name": getattr(p, "name", "")} for p in places]
                     day_map = render_coordinate_map(day_coords, f"📍 Day Map — Day {day_index}")
                     if day_map:
-                        st.markdown(day_map, unsafe_allow_html=True)
+                        components.html(day_map, height=500, scrolling=False)
                         st.markdown("---")
 
                 if not places:
