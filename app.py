@@ -202,9 +202,11 @@ def render_coordinate_map(points, title: str):
         return height - pad - ((lat - lat_min) / lat_span) * (height - 2 * pad)
 
     circles = []
+    path_points = []
     for idx, point in enumerate(valid, start=1):
         x = sx(point["lon"])
         y = sy(point["lat"])
+        path_points.append(f"{x:.1f},{y:.1f}")
         label = html.escape(point["name"][:34])
         circles.append(f"""
             <g>
@@ -213,12 +215,28 @@ def render_coordinate_map(points, title: str):
             </g>
         """)
 
+    route_layer = ""
+    if len(path_points) >= 2:
+        route_layer = f"""
+        <polyline
+          points="{' '.join(path_points)}"
+          fill="none"
+          stroke="#22c55e"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-dasharray="7 5"
+          opacity="0.9"
+        />
+        """
+
     svg = f"""
     <div style="margin: 0.5rem 0 1rem 0;">
       <div style="font-size: 1.05rem; font-weight: 700; margin-bottom: 0.35rem;">{html.escape(title)}</div>
       <svg viewBox="0 0 {width} {height}" width="100%" height="{height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{html.escape(title)}">
         <rect x="0" y="0" width="{width}" height="{height}" rx="18" fill="#121418" stroke="#2f3338" />
         <rect x="10" y="10" width="{width - 20}" height="{height - 20}" rx="14" fill="#0b1220" stroke="#262b33" />
+        {route_layer}
         <line x1="{pad}" y1="{height - pad}" x2="{width - pad}" y2="{height - pad}" stroke="#5b6472" stroke-width="1" opacity="0.45" />
         <line x1="{pad}" y1="{pad}" x2="{pad}" y2="{height - pad}" stroke="#5b6472" stroke-width="1" opacity="0.45" />
         <text x="{pad}" y="24" fill="#9ca3af" font-size="12" font-family="Arial">Longitude →</text>
