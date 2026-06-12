@@ -9,6 +9,15 @@ A multi-agent travel itinerary planner using local LLM and REST APIs
 
 This project demonstrates a **multi-agent architecture** where specialized AI agents collaborate to create personalized travel itineraries. The system runs entirely locally and is optimized for consumer hardware (8GB RAM).
 
+## Demo Screenshots
+<img width="830" height="406" alt="Screenshot 2026-06-11 at 5 31 25 PM" src="https://github.com/user-attachments/assets/62c72a96-6e34-4c30-9c8f-65d2b17c3d6a" />
+<img width="828" height="396" alt="Screenshot 2026-06-11 at 5 31 40 PM" src="https://github.com/user-attachments/assets/b6e35b96-7d75-4e46-9a06-028ba26544b8" />
+<img width="822" height="375" alt="Screenshot 2026-06-11 at 5 33 00 PM" src="https://github.com/user-attachments/assets/c58a036d-f04c-4a13-bc85-7b08dc0f1c21" />
+<img width="851" height="413" alt="Screenshot 2026-06-11 at 5 33 19 PM" src="https://github.com/user-attachments/assets/83edfc0a-1a81-4989-a48f-c1e1566630ea" />
+<img width="832" height="416" alt="Screenshot 2026-06-11 at 5 33 39 PM" src="https://github.com/user-attachments/assets/08ffc689-94b7-4ea7-b8d4-e39627f01c29" />
+
+
+
 ### Key Features
 - 🤖 **5 Specialized Agents** working in sequential pipeline
 - 🧠 **LangGraph StateGraph Orchestration** with conditional retry on sparse POI search
